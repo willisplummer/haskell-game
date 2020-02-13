@@ -13,3 +13,5 @@ $ cachix use ghcide-nix
 - open a nix shell (`nix-shell`)
 - in the shell, run `stack build`
 - in the shell, run `stack exec haskell-game-exe`
+
+[shoutout](https://leanpub.com/gameinhaskell)
