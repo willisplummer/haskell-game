@@ -58,11 +58,5 @@ in
               pkgs.mtl
           ]))
       ];
-      shellHook = ''
-        expression=$(grep "export" < nixGL/result/bin/nixGL*)
-        if [ -n "$expression" ]; then
-          eval "$expression"
-        fi
-      '';
   }
 
