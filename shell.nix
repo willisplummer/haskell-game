@@ -45,6 +45,12 @@ let
 in
   mkShell {
       buildInputs = [
+          darwin.apple_sdk.frameworks.OpenGL
+          darwin.apple_sdk.frameworks.AGL
+          darwin.apple_sdk.frameworks.Cocoa
+          darwin.apple_sdk.frameworks.IOKit
+          darwin.apple_sdk.frameworks.CoreFoundation
+          darwin.apple_sdk.frameworks.CoreVideo
           clang
           glfw
           ftgl
@@ -58,5 +64,13 @@ in
               pkgs.mtl
           ]))
       ];
+    NIX_LDFLAGS = ''
+      -F${darwin.apple_sdk.frameworks.OpenGL}/Library/Frameworks
+      -F${darwin.apple_sdk.frameworks.AGL}/Library/Frameworks
+      -F${darwin.apple_sdk.frameworks.Cocoa}/Library/Frameworks
+      -F${darwin.apple_sdk.frameworks.IOKit}/Library/Frameworks
+      -F${darwin.apple_sdk.frameworks.CoreFoundation}/Library/Frameworks
+      -F${darwin.apple_sdk.frameworks.CoreVideo}/Library/Frameworks
+    '';
   }
 
