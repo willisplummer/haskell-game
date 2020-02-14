@@ -1,90 +1,177 @@
-{-# LANGUAGE PackageImports #-}
-
 module Lib
     ( run
     ) where
 
-import Control.Monad             (unless, when, void)
-import Control.Monad.IO.Class (liftIO)
-import Control.Concurrent (threadDelay)
-import Control.Monad.State (runStateT, StateT, put, get)
-
-import System.Exit ( exitWith, ExitCode(..) )
-
-import "GLFW-b" Graphics.UI.GLFW as GLFW
-import Graphics.Gloss.Rendering as RS
-import Graphics.Gloss.Data.Color
-import Graphics.Gloss.Data.Picture
-
-import WithWindow (withWindow)
-
-windowWidth, windowHeight :: Int
-windowWidth  = 640
-windowHeight = 480
-
-type Pos = Point
-data Player = Player {position :: Pos}
-
-initialPlayer :: Player
-initialPlayer = Player (0,0)
-
-playerSize :: Float
-playerSize = 20
-
-renderFrame :: Player -> Window -> RS.State -> IO ()
-renderFrame (Player (xpos, ypos)) window glossState = do
-   displayPicture (windowWidth, windowHeight) white glossState 1.0 $ translate xpos ypos $ rectangleSolid playerSize playerSize
-   swapBuffers window
-
-keyIsPressed :: Window -> Key -> IO Bool
-keyIsPressed win key = isPress `fmap` GLFW.getKey win key
-
-isPress :: KeyState -> Bool
-isPress KeyState'Pressed   = True
-isPress KeyState'Repeating = True
-isPress _                  = False
-
-movePlayer :: (Bool, Bool, Bool, Bool) -> Player -> Float -> Player
-movePlayer direction player increment
-         | outsideOfLimits (position (move direction player increment)) playerSize = player
-         | otherwise = move direction player increment
-
-outsideOfLimits :: (Float, Float) -> Float -> Bool
-outsideOfLimits (xmon, ymon) size = xmon > fromIntegral windowWidth/2 - size/2 ||
-                                    xmon < (-(fromIntegral windowWidth)/2 + size/2) ||
-                                    ymon > fromIntegral windowHeight/2 - size/2 ||
-                                    ymon < (-(fromIntegral windowHeight)/2 + size/2)
-
-move :: (Bool, Bool, Bool, Bool) -> Player -> Float -> Player
-move (True, _, _, _) (Player (xpos, ypos)) increment = Player ((xpos - increment), ypos)
-move (_, True, _, _) (Player (xpos, ypos)) increment = Player ((xpos + increment), ypos)
-move (_, _, True, _) (Player (xpos, ypos)) increment = Player (xpos, (ypos + increment))
-move (_, _, _, True) (Player (xpos, ypos)) increment = Player (xpos, (ypos - increment))
-move (False, False, False, False) (Player (xpos, ypos)) _ = Player (xpos, ypos)
+import qualified Graphics.Gloss.Interface.Pure.Game as G
+import qualified System.Random as R
 
 run :: IO ()
 run = do
-  glossState <- initState
-  withWindow windowWidth windowHeight "Game-Demo" $ \win -> do
-    _ <- runStateT (loop glossState win) initialPlayer
-    exitWith ExitSuccess
+    seed <- R.randomIO
+    let world = initialWorld seed
 
-loop :: RS.State -> Window -> StateT Player IO ()
-loop glossState window = do
-  liftIO $ threadDelay 20000
-  liftIO $ pollEvents
+    G.play
+        (displayMode world)
+        backgroundColor
+        stepRate
+        world
+        drawWorld
+        handleEvent
+        handleStep
 
-  k <- liftIO $ keyIsPressed window Key'Escape
-  l <- liftIO $ keyIsPressed window Key'Left
-  r <- liftIO $ keyIsPressed window Key'Right
-  u <- liftIO $ keyIsPressed window Key'Up
-  d <- liftIO $ keyIsPressed window Key'Down
+--
 
-  player <- get
-  let newState = movePlayer (l,r,u,d) player 10
-  put newState
+displayMode :: World -> G.Display
+displayMode world = G.InWindow "Snake" (resolution world) (0, 0)
 
-  liftIO $ renderFrame newState window glossState
+backgroundColor :: G.Color
+backgroundColor = G.white
 
-  unless k $ loop glossState window
+stepRate :: Int
+stepRate = 10
 
+initialWorld :: Int -> World
+initialWorld seed = moveFood NewWorld
+    { resolution = (512, 512)
+    , direction = North
+    , scale = 11
+    , snake = [(0, 2), (0, 1), (0, 0), (0, -1), (0, -2)]
+    , isOver = False
+    , gen = R.mkStdGen seed
+    , food = (0, 0)
+    }
+
+drawWorld :: World -> G.Picture
+drawWorld world = G.pictures
+    [ drawBounds world
+    , drawFood world
+    , drawSnake world
+    , drawGameOver world
+    ]
+
+handleEvent :: G.Event -> World -> World
+handleEvent event world = case event of
+    G.EventResize newResolution -> handleResize newResolution world
+    G.EventKey key state _ _ -> if isOver world
+        then world
+        else handleKey key state world
+    _ -> world
+
+handleStep :: Float -> World -> World
+handleStep _time world =
+    if isOver world
+    then world
+    else
+        let oldSnake = snake world
+            newSnake@((x, y) : _) = init oldSnake
+            (x', y') = case direction world of
+                North -> (x, y + 1)
+                East -> (x + 1, y)
+                South -> (x, y - 1)
+                West -> (x - 1, y)
+        in  if inBounds world (x', y') && not (isSnake world (x', y'))
+            then if isFood world (x', y')
+                then
+                    let world' = moveFood world
+                    in  world' { snake = (x', y') : oldSnake }
+                else world { snake = (x', y') : newSnake }
+            else world { isOver = True }
+
+---
+
+drawBounds :: World -> G.Picture
+drawBounds world =
+    let x = size world
+    in  G.rectangleWire x x
+
+drawFood :: World -> G.Picture
+drawFood world = G.color G.green (drawBox (food world) world)
+
+drawSnake :: World -> G.Picture
+drawSnake world = case snake world of
+    (p : ps) -> G.pictures
+        ( G.color G.orange (drawBox p world)
+        : map (\ x -> drawBox x world) ps
+        )
+    _ -> G.blank
+
+drawBox :: (Int, Int) -> World -> G.Picture
+drawBox (x, y) world =
+    let s = size world / fromIntegral (scale world)
+        x' = s * fromIntegral x
+        y' = s * fromIntegral y
+    in  G.translate x' y' (G.rectangleSolid s s)
+
+drawGameOver :: World -> G.Picture
+drawGameOver world = if isOver world
+    then G.pictures
+        [ G.color G.red (G.scale 0.2 0.2 (G.text "game over"))
+        , G.color G.blue (G.translate 0 (-50) (G.scale 0.2 0.2 (G.text ("score: " ++ show (length (snake world))))))
+        ]
+    else G.blank
+
+---
+
+handleResize :: (Int, Int) -> World -> World
+handleResize newResolution world = world { resolution = newResolution }
+
+handleKey :: G.Key -> G.KeyState -> World -> World
+handleKey key state world = case state of
+    G.Down -> case key of
+        G.SpecialKey G.KeyUp ->
+            world { direction = if direction world == South then South else North }
+        G.SpecialKey G.KeyRight ->
+            world { direction = if direction world == West then West else East }
+        G.SpecialKey G.KeyDown ->
+            world { direction = if direction world == North then North else South }
+        G.SpecialKey G.KeyLeft ->
+            world { direction = if direction world == East then East else West }
+        _ -> world
+    _ -> world
+
+---
+
+size :: (Num a) => World -> a
+size world =
+    let (width, height) = resolution world
+    in  fromIntegral (min width height)
+
+inBounds :: World -> (Int, Int) -> Bool
+inBounds world (x, y) =
+    let s = scale world `div` 2
+    in  -s <= x && x <= s && -s <= y && y <= s
+
+isSnake :: World -> (Int, Int) -> Bool
+isSnake world (x, y) = any (== (x, y)) (snake world)
+
+isFood :: World -> (Int, Int) -> Bool
+isFood world (x, y) = (x, y) == food world
+
+
+data World = NewWorld
+    { resolution :: (Int, Int)
+    , direction :: Direction
+    , scale :: Int
+    , snake :: [(Int, Int)]
+    , isOver :: Bool
+    , gen :: R.StdGen
+    , food :: (Int, Int)
+    } deriving (Read, Show)
+
+moveFood :: World -> World
+moveFood world =
+  let g0 = gen world
+      a = scale world `div` 2
+      (x, g1) = R.randomR (-a, a) g0
+      (y, g2) = R.randomR (-a, a) g1
+  in  if isSnake world (x, y)
+      then moveFood world { gen = g2 }
+      else world { gen = g2 , food = (x, y) }
+
+
+data Direction
+    = North
+    | East
+    | South
+    | West
+    deriving (Bounded, Enum, Eq, Ord, Read, Show)

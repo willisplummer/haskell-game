@@ -25,6 +25,7 @@ dependencies:
 - gloss
 - gloss-rendering
 - mtl
+- random
 # - transformers
 
 library:
